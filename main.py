@@ -12,6 +12,7 @@ from models import (
     NewsItem, NewsItemCreate, NewsItemResponse, NewsItemDetailResponse,
     PushNewsResponse, MarketSentimentResponse
 )
+from deepseek_client import analyze_news_with_deepseek
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
