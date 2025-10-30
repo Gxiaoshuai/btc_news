@@ -2,6 +2,8 @@
 import json
 from typing import Dict, List, Optional
 from openai import OpenAI
+import os
+import httpx
 from config import settings
 import logging
 
@@ -12,9 +14,12 @@ class DeepSeekClient:
     """DeepSeek API 客户端"""
     
     def __init__(self):
+        clean_http_client = httpx.Client(timeout=60)
+        
         self.client = OpenAI(
             api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_api_base
+            base_url=settings.deepseek_api_base,
+            http_client=clean_http_client   # ✅ 显式替换内部 httpx
         )
         self.model = settings.deepseek_model
         
