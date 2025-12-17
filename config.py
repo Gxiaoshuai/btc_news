@@ -1,5 +1,6 @@
 """配置文件"""
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from typing import Optional
 
 
@@ -28,9 +29,20 @@ class Settings(BaseSettings):
     major_news_threshold_low: float = 0.2  # 低于此值为重大利空
     major_news_threshold_high: float = 0.8  # 高于此值为重大利好
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore"  # 忽略额外的环境变量，而不是报错
+    )
+    
+    @field_validator('enable_ai_analysis', mode='before')
+    @classmethod
+    def parse_bool(cls, v):
+        """将字符串类型的布尔值转换为布尔类型"""
+        if isinstance(v, str):
+            return v.lower() in ('true', '1', 'yes', 'on')
+        return bool(v) if v is not None else True
 
 
 settings = Settings()
