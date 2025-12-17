@@ -83,3 +83,11 @@ class MarketSentimentResponse(SQLModel):
     max_score_news_id: Optional[int] = None
     min_score_news_id: Optional[int] = None
 
+
+class NewsListResponse(SQLModel):
+    """新闻列表分页响应模型"""
+    items: List[NewsItemResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

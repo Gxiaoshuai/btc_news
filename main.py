@@ -1,16 +1,16 @@
 """FastAPI 主应用"""
 from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session, select, func, desc, asc
+from sqlmodel import Session, select, func, desc, asc, or_
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 import logging
 
 from config import settings
 from database import engine, init_db, get_session
 from models import (
     NewsItem, NewsItemCreate, NewsItemResponse, NewsItemDetailResponse,
-    PushNewsResponse, MarketSentimentResponse
+    PushNewsResponse, MarketSentimentResponse, NewsListResponse
 )
 from deepseek_client import analyze_news_with_deepseek
 
@@ -68,11 +68,24 @@ async def push_news(
     接收爬虫推送的新闻并进行 AI 分析
     """
     try:
-        # 1. 调用 DeepSeek API 分析新闻
-        analysis_result = analyze_news_with_deepseek(news_data.content)
+        # 1. 根据配置决定是否调用 AI 分析
+        if settings.enable_ai_analysis:
+            # 调用 DeepSeek API 分析新闻
+            analysis_result = analyze_news_with_deepseek(news_data.content)
+            summary = analysis_result["summary"]
+            sentiment = analysis_result["sentiment"]
+            sentiment_score = analysis_result["sentiment_score"]
+            mentioned_coins = analysis_result["mentioned_coins"]
+            logger.info("使用 AI 分析新闻")
+        else:
+            # 不使用 AI 分析，使用默认值
+            summary = news_data.content[:200] if len(news_data.content) > 200 else news_data.content
+            sentiment = "neutral"
+            sentiment_score = 0.5
+            mentioned_coins = []
+            logger.info("跳过 AI 分析，使用默认值")
         
         # 2. 判断是否为重大新闻
-        sentiment_score = analysis_result["sentiment_score"]
         is_major = (sentiment_score < settings.major_news_threshold_low or
                    sentiment_score > settings.major_news_threshold_high)
         
@@ -80,12 +93,12 @@ async def push_news(
         news_item = NewsItem(
             original_content=news_data.content,
             source_url=news_data.source_url,
-            summary=analysis_result["summary"],
-            sentiment=analysis_result["sentiment"],
+            summary=summary,
+            sentiment=sentiment,
             sentiment_score=sentiment_score,
             is_major=is_major
         )
-        news_item.set_mentioned_coins_list(analysis_result["mentioned_coins"])
+        news_item.set_mentioned_coins_list(mentioned_coins)
         
         # 4. 保存到数据库
         session.add(news_item)
@@ -109,18 +122,59 @@ async def push_news(
         raise HTTPException(status_code=500, detail=f"处理新闻时发生错误: {str(e)}")
 
 
-@app.get("/get_news", response_model=List[NewsItemResponse])
-async def get_news(session: Session = Depends(get_session)):
+@app.get("/get_news", response_model=NewsListResponse)
+async def get_news(
+    search: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+    session: Session = Depends(get_session)
+):
     """
-    查询过去1小时内的所有新闻
+    查询过去1小时内的新闻，支持模糊搜索和分页
+    - search: 搜索关键词（可选），会在新闻内容和摘要中搜索
+    - page: 页码，默认第1页
+    - page_size: 每页数量，默认20条
     """
     try:
         # 查询过去1小时内的新闻
         cutoff_time = datetime.utcnow() - timedelta(hours=settings.news_retention_hours)
         statement = select(NewsItem).where(
             NewsItem.received_at >= cutoff_time
-        ).order_by(desc(NewsItem.received_at))
+        )
         
+        # 如果提供了搜索关键词，添加模糊搜索条件
+        if search:
+            search_pattern = f"%{search}%"
+            statement = statement.where(
+                or_(
+                    NewsItem.original_content.like(search_pattern),
+                    NewsItem.summary.like(search_pattern)
+                )
+            )
+        
+        # 先获取总数（用于分页信息）
+        # 创建一个独立的计数查询，使用相同的条件
+        count_statement = select(func.count(NewsItem.id)).where(
+            NewsItem.received_at >= cutoff_time
+        )
+        if search:
+            search_pattern = f"%{search}%"
+            count_statement = count_statement.where(
+                or_(
+                    NewsItem.original_content.like(search_pattern),
+                    NewsItem.summary.like(search_pattern)
+                )
+            )
+        total = session.exec(count_statement).one()
+        
+        # 添加排序和分页
+        statement = statement.order_by(desc(NewsItem.received_at))
+        
+        # 计算偏移量
+        offset = (page - 1) * page_size
+        statement = statement.offset(offset).limit(page_size)
+        
+        # 执行查询
         news_items = session.exec(statement).all()
         
         # 构建响应列表
@@ -140,7 +194,16 @@ async def get_news(session: Session = Depends(get_session)):
             
             result.append(response_item)
         
-        return result
+        # 计算总页数
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+        
+        return NewsListResponse(
+            items=result,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
         
     except Exception as e:
         logger.error(f"查询新闻时发生错误: {e}")

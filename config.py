@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # 新闻处理配置
     news_retention_hours: int = 24
     
+    # AI 分析配置
+    enable_ai_analysis: bool = True  # 是否启用AI进行新闻整理分析
+    
     # 重大新闻阈值
     major_news_threshold_low: float = 0.2  # 低于此值为重大利空
     major_news_threshold_high: float = 0.8  # 高于此值为重大利好
