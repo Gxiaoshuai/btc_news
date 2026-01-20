@@ -1,6 +1,6 @@
 """配置文件"""
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import field_validator, computed_field
 from typing import Optional
 
 
@@ -12,8 +12,18 @@ class Settings(BaseSettings):
     deepseek_api_base: str = "https://api.deepseek.com/v1"
     deepseek_model: str = "deepseek-chat"
     
-    # 数据库配置
-    database_url: str = "sqlite:///./db/news.db"
+    # MySQL 数据库配置
+    mysql_host: str = "localhost"
+    mysql_port: int = 3306
+    mysql_database: str = "news_db"
+    mysql_user: str = "news_user"
+    mysql_password: str = "news_password"
+    
+    @computed_field
+    @property
+    def database_url(self) -> str:
+        """构建 MySQL 数据库连接 URL"""
+        return f"mysql+pymysql://{self.mysql_user}:{self.mysql_password}@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}?charset=utf8mb4"
     
     # 服务器配置
     app_name: str = "加密货币新闻服务端"
@@ -30,7 +40,7 @@ class Settings(BaseSettings):
     major_news_threshold_high: float = 0.8  # 高于此值为重大利好
     
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file="/app/.env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"  # 忽略额外的环境变量，而不是报错
@@ -46,3 +56,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+print(settings.enable_ai_analysis)

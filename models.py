@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import String, DateTime, Boolean, Float
+from sqlalchemy import String, DateTime, Boolean, Float, Text
 import json
 
 
@@ -11,17 +11,21 @@ class NewsItem(SQLModel, table=True):
     __tablename__ = "newsitem"
     
     id: Optional[int] = Field(default=None, primary_key=True)
-    original_content: str = Field(sa_column=Column("original_content", type_=String, nullable=False))
-    source_url: str = Field(sa_column=Column("source_url", type_=String, nullable=False))
+    # 新闻标题，必填，支持全文索引
+    title: str = Field(sa_column=Column("title", String(500), nullable=False))
+    # 使用 Text 类型以支持全文索引和较长内容
+    original_content: str = Field(sa_column=Column("original_content", Text, nullable=False))
+    source_url: str = Field(sa_column=Column("source_url", String(2048), nullable=False))
     received_at: datetime = Field(
         default_factory=datetime.utcnow,
-        sa_column=Column("received_at", type_=DateTime, nullable=False, index=True)
+        sa_column=Column("received_at", DateTime, nullable=False, index=True)
     )
-    summary: str = Field(sa_column=Column("summary", type_=String, nullable=False))
-    sentiment: str = Field(sa_column=Column("sentiment", type_=String, nullable=False))  # 'positive', 'negative', 'neutral'
-    sentiment_score: float = Field(sa_column=Column("sentiment_score", type_=Float, nullable=False))
-    mentioned_coins: str = Field(sa_column=Column("mentioned_coins", type_=String, nullable=False))  # JSON 字符串
-    is_major: bool = Field(default=False, sa_column=Column("is_major", type_=Boolean, nullable=False))
+    # 使用 Text 类型以支持全文索引
+    summary: str = Field(sa_column=Column("summary", Text, nullable=False))
+    sentiment: str = Field(sa_column=Column("sentiment", String(50), nullable=False))  # 'positive', 'negative', 'neutral'
+    sentiment_score: float = Field(sa_column=Column("sentiment_score", Float, nullable=False))
+    mentioned_coins: str = Field(sa_column=Column("mentioned_coins", Text, nullable=False))  # JSON 字符串
+    is_major: bool = Field(default=False, sa_column=Column("is_major", Boolean, nullable=False))
     
     def get_mentioned_coins_list(self) -> List[str]:
         """将 JSON 字符串转换为列表"""
@@ -37,6 +41,7 @@ class NewsItem(SQLModel, table=True):
 
 class NewsItemCreate(SQLModel):
     """创建新闻的请求模型"""
+    title: str  # 新闻标题，必填
     content: str
     source_url: str
 
@@ -44,6 +49,7 @@ class NewsItemCreate(SQLModel):
 class NewsItemResponse(SQLModel):
     """新闻响应模型"""
     id: int
+    title: str
     summary: str
     sentiment: str
     sentiment_score: float
@@ -57,6 +63,7 @@ class NewsItemResponse(SQLModel):
 class NewsItemDetailResponse(SQLModel):
     """新闻详情响应模型"""
     id: int
+    title: str
     original_content: str
     source_url: str
     received_at: datetime

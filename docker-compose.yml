@@ -1,15 +1,47 @@
-version: '3.8'
-
 services:
+  # MySQL 数据库服务
+  mysql:
+    image: mysql:8.0
+    container_name: news_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-news_db}
+      MYSQL_USER: ${MYSQL_USER:-news_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-news_password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-ft-min-token-size=1
+      - --ft-min-word-len=1
+      - --ngram_token_size=2
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root123456}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   # 主应用服务
   app:
     build: .
     ports:
       - "8000:8000"
     volumes:
-      - ./db:/app/db
       - ./.env:/app/.env
-
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-news_db}
+      - MYSQL_USER=${MYSQL_USER:-news_user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-news_password}
+    depends_on:
+      mysql:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -24,12 +56,18 @@ services:
   #   command: python run_crawler.py
   #   environment:
   #     - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-  #     - DATABASE_URL=sqlite:///./db/news.db
+  #     - MYSQL_HOST=mysql
+  #     - MYSQL_PORT=3306
+  #     - MYSQL_DATABASE=${MYSQL_DATABASE:-news_db}
+  #     - MYSQL_USER=${MYSQL_USER:-news_user}
+  #     - MYSQL_PASSWORD=${MYSQL_PASSWORD:-news_password}
   #   volumes:
-  #     - ./db:/app/db
   #     - ./.env:/app/.env
   #   depends_on:
-  #     - app
+  #     mysql:
+  #       condition: service_healthy
+  #     app:
+  #       condition: service_started
   #   restart: unless-stopped
 
   # 可选：Redis缓存服务（如果需要缓存）
@@ -41,5 +79,6 @@ services:
   #     - redis_data:/data
   #   restart: unless-stopped
 
-# volumes:
-#   redis_data:
+volumes:
+  mysql_data:
+  # redis_data:

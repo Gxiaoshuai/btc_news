@@ -7,7 +7,7 @@ from typing import List, Optional
 import logging
 
 from config import settings
-from database import engine, init_db, get_session
+from database import engine, init_db, get_session, fulltext_search
 from models import (
     NewsItem, NewsItemCreate, NewsItemResponse, NewsItemDetailResponse,
     PushNewsResponse, MarketSentimentResponse, NewsListResponse
@@ -91,6 +91,7 @@ async def push_news(
         
         # 3. 创建新闻项
         news_item = NewsItem(
+            title=news_data.title,
             original_content=news_data.content,
             source_url=news_data.source_url,
             summary=summary,
@@ -125,63 +126,92 @@ async def push_news(
 @app.get("/get_news", response_model=NewsListResponse)
 async def get_news(
     search: Optional[str] = None,
+    relevance_threshold: Optional[float] = None,
     page: int = 1,
     page_size: int = 20,
     session: Session = Depends(get_session)
 ):
     """
-    查询过去1小时内的新闻，支持模糊搜索和分页
-    - search: 搜索关键词（可选），会在新闻内容和摘要中搜索
+    查询过去1小时内的新闻，支持全文索引搜索和分页
+    - search: 搜索关键词（可选），使用MySQL全文索引在新闻标题和内容中搜索，按相关度排序
+    - relevance_threshold: 相关度阈值（可选），只返回相关度大于等于此值的结果，取值范围通常为0-10+
     - page: 页码，默认第1页
     - page_size: 每页数量，默认20条
     """
     try:
-        # 查询过去1小时内的新闻
-        cutoff_time = datetime.utcnow() - timedelta(hours=settings.news_retention_hours)
-        statement = select(NewsItem).where(
-            NewsItem.received_at >= cutoff_time
-        )
+        # 查询过去指定时间内的新闻
+        cutoff_time = None
         
-        # 如果提供了搜索关键词，添加模糊搜索条件
+        news_items = []
+        total = 0
+        
+        # 如果提供了搜索关键词，使用全文索引搜索
         if search:
-            search_pattern = f"%{search}%"
-            statement = statement.where(
-                or_(
-                    NewsItem.original_content.like(search_pattern),
-                    NewsItem.summary.like(search_pattern)
-                )
+            # 尝试使用全文索引搜索
+            ft_result, ft_total, used_fulltext = fulltext_search(
+                session, search, cutoff_time, page, page_size
             )
-        
-        # 先获取总数（用于分页信息）
-        # 创建一个独立的计数查询，使用相同的条件
-        count_statement = select(func.count(NewsItem.id)).where(
-            NewsItem.received_at >= cutoff_time
-        )
-        if search:
-            search_pattern = f"%{search}%"
-            count_statement = count_statement.where(
-                or_(
-                    NewsItem.original_content.like(search_pattern),
-                    NewsItem.summary.like(search_pattern)
+            
+            if used_fulltext and ft_result is not None:
+                # 全文搜索成功，按相关度排序
+                news_items = ft_result
+                total = ft_total
+                logger.info(f"使用全文索引搜索，关键词: {search}, 结果数: {total}")
+            else:
+                # 回退到 LIKE 搜索
+                search_pattern = f"%{search}%"
+                statement = select(NewsItem).where(
+                    NewsItem.received_at >= cutoff_time
+                ).where(
+                    or_(
+                        NewsItem.title.like(search_pattern),
+                        NewsItem.original_content.like(search_pattern),
+                        NewsItem.summary.like(search_pattern)
+                    )
                 )
+                
+                # 获取总数
+                count_statement = select(func.count(NewsItem.id)).where(
+                    NewsItem.received_at >= cutoff_time
+                ).where(
+                    or_(
+                        NewsItem.title.like(search_pattern),
+                        NewsItem.original_content.like(search_pattern),
+                        NewsItem.summary.like(search_pattern)
+                    )
+                )
+                total = session.exec(count_statement).one()
+                
+                # 添加排序和分页
+                offset = (page - 1) * page_size
+                statement = statement.order_by(desc(NewsItem.received_at))
+                statement = statement.offset(offset).limit(page_size)
+                news_items = session.exec(statement).all()
+                logger.info(f"使用 LIKE 搜索，关键词: {search}, 结果数: {total}")
+        else:
+            # 无搜索关键词，查询所有新闻
+            statement = select(NewsItem).where(
+                NewsItem.received_at >= cutoff_time
             )
-        total = session.exec(count_statement).one()
-        
-        # 添加排序和分页
-        statement = statement.order_by(desc(NewsItem.received_at))
-        
-        # 计算偏移量
-        offset = (page - 1) * page_size
-        statement = statement.offset(offset).limit(page_size)
-        
-        # 执行查询
-        news_items = session.exec(statement).all()
+            
+            # 获取总数
+            count_statement = select(func.count(NewsItem.id)).where(
+                NewsItem.received_at >= cutoff_time
+            )
+            total = session.exec(count_statement).one()
+            
+            # 添加排序和分页
+            offset = (page - 1) * page_size
+            statement = statement.order_by(desc(NewsItem.received_at))
+            statement = statement.offset(offset).limit(page_size)
+            news_items = session.exec(statement).all()
         
         # 构建响应列表
         result = []
         for news in news_items:
             response_item = NewsItemResponse(
                 id=news.id,
+                title=news.title,
                 summary=news.summary,
                 sentiment=news.sentiment,
                 sentiment_score=news.sentiment_score,
@@ -224,6 +254,7 @@ async def get_new_detail(news_id: int, session: Session = Depends(get_session)):
         
         return NewsItemDetailResponse(
             id=news_item.id,
+            title=news_item.title,
             original_content=news_item.original_content,
             source_url=news_item.source_url,
             received_at=news_item.received_at,
